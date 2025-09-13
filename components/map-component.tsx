@@ -13,27 +13,29 @@ interface School {
   lng: number
   visited: boolean
   visitDates: string[]
+  notes?: string
 }
 
 interface MapComponentProps {
   schools: School[]
   onSchoolClick: (schoolId: string) => void
-  onAddSchool?: (lat: number, lng: number) => void
 }
 
 declare global {
   interface Window {
     AMap: any
+    BMap: any
     initAMap: () => void
+    initBaiduMap: () => void
     recordVisit: (schoolId: string) => void
+    [key: string]: any // 允许动态属性，用于JSONP回调
   }
 }
 
-export default function MapComponent({ schools, onSchoolClick, onAddSchool }: MapComponentProps) {
+export default function MapComponent({ schools, onSchoolClick }: MapComponentProps) {
   const mapRef = useRef<HTMLDivElement>(null)
   const mapInstanceRef = useRef<any>(null)
   const markersRef = useRef<any[]>([])
-  const [isAddingMode, setIsAddingMode] = useState(false)
   const [selectedSchool, setSelectedSchool] = useState<School | null>(null)
 
   useEffect(() => {
@@ -86,9 +88,10 @@ export default function MapComponent({ schools, onSchoolClick, onAddSchool }: Ma
 
           const infoWindow = new window.AMap.InfoWindow({
             content: `
-              <div style="padding: 12px; max-width: 250px;">
+              <div style="padding: 12px; max-width: 280px;">
                 <h3 style="margin: 0 0 8px 0; font-size: 16px; font-weight: bold; color: #1f2937;">${school.name}</h3>
                 <p style="margin: 0 0 8px 0; font-size: 14px; color: #6b7280;">${school.address}</p>
+                ${school.notes ? `<p style="margin: 0 0 8px 0; font-size: 13px; color: #374151; background: #f3f4f6; padding: 4px 8px; border-radius: 4px;"><strong>备注:</strong> ${school.notes}</p>` : ''}
                 <div style="font-size: 13px;">
                   <p style="margin: 0 0 4px 0; color: ${school.visited ? "#10b981" : "#ef4444"};">
                     状态: ${school.visited ? "已访问" : "未访问"}
@@ -117,17 +120,13 @@ export default function MapComponent({ schools, onSchoolClick, onAddSchool }: Ma
           })
 
           circle.on("click", () => {
-            if (!isAddingMode) {
-              setSelectedSchool(school)
-              infoWindow.open(map, [school.lng, school.lat])
-            }
+            setSelectedSchool(school)
+            infoWindow.open(map, [school.lng, school.lat])
           })
 
           text.on("click", () => {
-            if (!isAddingMode) {
-              setSelectedSchool(school)
-              infoWindow.open(map, [school.lng, school.lat])
-            }
+            setSelectedSchool(school)
+            infoWindow.open(map, [school.lng, school.lat])
           })
 
           markersRef.current.push(circle, text)
@@ -192,24 +191,7 @@ export default function MapComponent({ schools, onSchoolClick, onAddSchool }: Ma
     }
   }, [])
 
-  // 单独处理地图点击事件
-  useEffect(() => {
-    if (mapInstanceRef.current) {
-      const map = mapInstanceRef.current
-      
-      // 移除之前的点击事件监听器
-      map.off("click")
-      
-      // 添加新的点击事件监听器
-      map.on("click", (e: any) => {
-        if (isAddingMode && onAddSchool) {
-          const { lng, lat } = e.lnglat
-          onAddSchool(lat, lng)
-          setIsAddingMode(false)
-        }
-      })
-    }
-  }, [isAddingMode, onAddSchool])
+
 
   // 确保地图正确渲染
   useEffect(() => {
@@ -259,17 +241,6 @@ export default function MapComponent({ schools, onSchoolClick, onAddSchool }: Ma
     <div className="w-full">
       {/* 控制按钮 */}
       <div className="mb-3 flex flex-wrap gap-2">
-        {onAddSchool && (
-          <Button
-            onClick={() => setIsAddingMode(!isAddingMode)}
-            variant={isAddingMode ? "default" : "outline"}
-            size="sm"
-          >
-            <Plus className="w-4 h-4 mr-2" />
-            {isAddingMode ? "取消添加" : "添加学校"}
-          </Button>
-        )}
-        
         <Button
           onClick={() => {
             if (mapInstanceRef.current) {
@@ -283,18 +254,12 @@ export default function MapComponent({ schools, onSchoolClick, onAddSchool }: Ma
           <MapPin className="w-4 h-4 mr-2" />
           回到顺义区
         </Button>
-        
-        {isAddingMode && (
-          <Badge variant="secondary" className="text-xs">
-            点击地图添加学校位置
-          </Badge>
-        )}
       </div>
 
       {/* 地图容器 */}
       <div 
         ref={mapRef} 
-        className={`w-full rounded-lg border ${isAddingMode ? 'cursor-crosshair' : ''}`} 
+        className="w-full rounded-lg border" 
         style={{ 
           height: "500px", 
           minHeight: "500px",
@@ -339,8 +304,7 @@ export default function MapComponent({ schools, onSchoolClick, onAddSchool }: Ma
         <p>• 绿色圆圈：已访问学校</p>
         <p>• 红色圆圈：未访问学校</p>
         <p>• 圆圈中的数字：访问次数</p>
-        <p>• 点击圆圈查看学校详情</p>
-        {onAddSchool && <p>• 点击"添加学校"按钮后，在地图上点击位置添加新学校</p>}
+        <p>• 点击圆圈查看学校详情和备注信息</p>
       </div>
     </div>
   )

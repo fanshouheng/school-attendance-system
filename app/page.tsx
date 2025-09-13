@@ -19,6 +19,7 @@ interface School {
   lng: number
   visited: boolean
   visitDates: string[]
+  notes?: string
 }
 
 interface YearlyStats {
@@ -34,34 +35,45 @@ export default function SchoolAttendanceSystem() {
   const [selectedYear, setSelectedYear] = useState<string>("total")
   const [newSchoolName, setNewSchoolName] = useState("")
   const [newSchoolAddress, setNewSchoolAddress] = useState("")
+  const [newSchoolNotes, setNewSchoolNotes] = useState("")
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false)
   const [mapLoaded, setMapLoaded] = useState(false)
   const [isGeocoding, setIsGeocoding] = useState(false)
-  const [pendingLocation, setPendingLocation] = useState<{ lat: number; lng: number } | null>(null)
+  const [searchResults, setSearchResults] = useState<any[]>([])
+  const [isSearching, setIsSearching] = useState(false)
+  const [selectedLocation, setSelectedLocation] = useState<{ lat: number; lng: number; address: string } | null>(null)
+
 
   useEffect(() => {
-    const loadAMapAPI = () => {
+    const loadBaiduMapAPI = () => {
       return new Promise<void>((resolve, reject) => {
-        if (window.AMap) {
-          console.log("[v0] 高德地图API已加载")
+        if (window.BMap) {
+          console.log("[v0] 百度地图API已加载")
           setMapLoaded(true)
           resolve()
           return
         }
 
-        const script = document.createElement("script")
-        script.src = `https://webapi.amap.com/maps?v=2.0&key=7c6fd1e571326c053ad9b19a53ea7127`
-        script.async = true
-        script.defer = true
-
-        script.onload = () => {
-          console.log("[v0] 高德地图API加载成功")
-          setMapLoaded(true)
-          resolve()
+        // 设置全局回调函数
+        window.initBaiduMap = () => {
+          console.log("[v0] 百度地图API加载成功")
+          if (window.BMap) {
+            console.log("[v0] BMap对象可用")
+            setMapLoaded(true)
+            resolve()
+          } else {
+            console.error("[v0] BMap对象不可用")
+            reject(new Error("BMap对象不可用"))
+          }
         }
 
+        const script = document.createElement("script")
+        // 百度地图API - 需要申请key
+        script.src = `https://api.map.baidu.com/api?v=3.0&ak=lsJPs5TS0lXPAccFlnTDsa5oFeUrdngn&callback=initBaiduMap`
+        script.async = true
+
         script.onerror = (error) => {
-          console.error("[v0] 高德地图API加载失败:", error)
+          console.error("[v0] 百度地图API加载失败:", error)
           reject(error)
         }
 
@@ -69,7 +81,7 @@ export default function SchoolAttendanceSystem() {
       })
     }
 
-    loadAMapAPI().catch(console.error)
+    loadBaiduMapAPI().catch(console.error)
   }, [])
 
 
@@ -144,29 +156,166 @@ export default function SchoolAttendanceSystem() {
 
   const filteredSchools = getFilteredSchools()
 
+  const searchSchools = async (query: string) => {
+    if (!query.trim()) {
+      console.log("[v0] 搜索条件不满足:", { query: query.trim() })
+      return
+    }
+    
+    console.log("[v0] 开始搜索顺义区学校:", query)
+    setIsSearching(true)
+    setSearchResults([])
+    
+    try {
+      await searchWithBaiduWebAPI(query)
+    } catch (error) {
+      console.error("[v0] 搜索学校失败:", error)
+      setSearchResults([])
+    } finally {
+      setIsSearching(false)
+    }
+  }
+
+
+
+  const searchWithBaiduWebAPI = async (query: string) => {
+    return new Promise<void>((resolve) => {
+      const searchQuery = query.includes('学校') || query.includes('小学') || query.includes('中学') 
+        ? query 
+        : query + ' 学校'
+      
+      // 创建JSONP回调函数
+      const callbackName = `baiduCallback_${Date.now()}`
+      window[callbackName] = (data: any) => {
+        console.log("[v0] 百度Web API响应:", data)
+        
+        if (data.status === 0 && data.results && data.results.length > 0) {
+          const pois = data.results.map((poi: any, index: number) => ({
+            id: `baidu_${poi.uid || index}`,
+            name: poi.name,
+            address: poi.address,
+            location: {
+              lat: poi.location.lat,
+              lng: poi.location.lng
+            },
+            type: poi.detail_info?.tag || "学校"
+          }))
+          
+          console.log("[v0] 百度Web API找到:", pois.length, "个结果")
+          setSearchResults(pois)
+        } else {
+          console.log("[v0] 百度Web API搜索无结果")
+          setSearchResults([])
+        }
+        
+        // 清理
+        delete window[callbackName]
+        document.head.removeChild(script)
+        resolve()
+      }
+      
+      // 创建JSONP请求
+      const script = document.createElement('script')
+      const apiUrl = `https://api.map.baidu.com/place/v2/search?query=${encodeURIComponent(searchQuery)}&region=顺义区&output=json&ak=lsJPs5TS0lXPAccFlnTDsa5oFeUrdngn&callback=${callbackName}`
+      
+      script.src = apiUrl
+      script.onerror = () => {
+        console.error("[v0] 百度Web API请求失败")
+        setSearchResults([])
+        delete window[callbackName]
+        document.head.removeChild(script)
+        resolve()
+      }
+      
+      document.head.appendChild(script)
+      
+      // 超时处理
+      setTimeout(() => {
+        if (window[callbackName]) {
+          console.log("[v0] 百度Web API请求超时")
+          setSearchResults([])
+          delete window[callbackName]
+          if (document.head.contains(script)) {
+            document.head.removeChild(script)
+          }
+          resolve()
+        }
+      }, 5000)
+    })
+  }
+
+
+
+  const testMapAPI = () => {
+    console.log("[v0] 开始测试百度地图Web服务API")
+    
+    // 直接测试Web服务API
+    const testQuery = "天安门"
+    const callbackName = `testCallback_${Date.now()}`
+    
+    window[callbackName] = (data: any) => {
+      console.log("[v0] 百度Web API测试响应:", data)
+      
+      if (data.status === 0 && data.results && data.results.length > 0) {
+        console.log("[v0] 百度Web API测试成功！找到", data.results.length, "个结果")
+        alert(`百度Web API测试成功！找到 ${data.results.length} 个结果`)
+      } else {
+        console.log("[v0] 百度Web API测试失败:", data.message || "未知错误")
+        alert(`百度Web API测试失败: ${data.message || "未知错误"}`)
+      }
+      
+      // 清理
+      delete window[callbackName]
+      document.head.removeChild(script)
+    }
+    
+    const script = document.createElement('script')
+    const apiUrl = `https://api.map.baidu.com/place/v2/search?query=${encodeURIComponent(testQuery)}&region=北京市&output=json&ak=lsJPs5TS0lXPAccFlnTDsa5oFeUrdngn&callback=${callbackName}`
+    
+    script.src = apiUrl
+    script.onerror = () => {
+      console.error("[v0] 百度Web API请求失败")
+      alert("百度Web API请求失败，请检查网络连接和API Key")
+      delete window[callbackName]
+      document.head.removeChild(script)
+    }
+    
+    document.head.appendChild(script)
+  }
+
+  const selectLocation = (poi: any) => {
+    console.log("[v0] 选择位置:", poi)
+    setSelectedLocation({
+      lat: poi.location.lat,
+      lng: poi.location.lng,
+      address: poi.address,
+    })
+    setNewSchoolAddress(poi.address)
+    setNewSchoolName(poi.name) // 自动填充学校名称
+    setSearchResults([])
+  }
+
   const addNewSchool = () => {
-    if (!newSchoolName || !newSchoolAddress || !pendingLocation) return
+    if (!newSchoolName || !newSchoolAddress || !selectedLocation) return
 
     const newSchool: School = {
       id: (schools.length + 1).toString(),
       name: newSchoolName,
       address: newSchoolAddress,
-      lat: pendingLocation.lat,
-      lng: pendingLocation.lng,
+      lat: selectedLocation.lat,
+      lng: selectedLocation.lng,
       visited: false,
       visitDates: [],
+      notes: newSchoolNotes || undefined,
     }
     
     setSchools([...schools, newSchool])
     setNewSchoolName("")
     setNewSchoolAddress("")
-    setPendingLocation(null)
+    setNewSchoolNotes("")
+    setSelectedLocation(null)
+    setSearchResults([])
     setIsAddDialogOpen(false)
-  }
-
-  const handleMapAddSchool = (lat: number, lng: number) => {
-    setPendingLocation({ lat, lng })
-    setIsAddDialogOpen(true)
   }
 
   useEffect(() => {
@@ -192,9 +341,11 @@ export default function SchoolAttendanceSystem() {
             <Dialog open={isAddDialogOpen} onOpenChange={(open) => {
               setIsAddDialogOpen(open)
               if (!open) {
-                setPendingLocation(null)
+                setSelectedLocation(null)
                 setNewSchoolName("")
                 setNewSchoolAddress("")
+                setNewSchoolNotes("")
+                setSearchResults([])
               }
             }}>
               <DialogTrigger asChild>
@@ -203,46 +354,106 @@ export default function SchoolAttendanceSystem() {
                   添加学校
                 </Button>
               </DialogTrigger>
-              <DialogContent>
+              <DialogContent className="max-w-md">
                 <DialogHeader>
                   <DialogTitle>添加新学校</DialogTitle>
                 </DialogHeader>
                 <div className="space-y-4">
-                  {pendingLocation && (
-                    <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                      <p className="text-sm text-blue-800">
-                        <strong>选中位置：</strong> 纬度 {pendingLocation.lat.toFixed(6)}, 经度 {pendingLocation.lng.toFixed(6)}
-                      </p>
-                    </div>
-                  )}
                   <div>
                     <Label htmlFor="schoolName">学校名称</Label>
                     <Input
                       id="schoolName"
                       value={newSchoolName}
-                      onChange={(e) => setNewSchoolName(e.target.value)}
-                      placeholder="请输入学校名称"
+                      onChange={(e) => {
+                        setNewSchoolName(e.target.value)
+                        if (e.target.value.trim()) {
+                          searchSchools(e.target.value)
+                        } else {
+                          setSearchResults([])
+                        }
+                      }}
+                      placeholder="如：顺义一中、实验小学、双兴小学等"
                     />
+                    <div className="text-xs text-gray-500 mt-1">
+                      建议搜索：顺义一中、顺义二中、实验小学、双兴小学、光明小学等
+                    </div>
+                    <Button 
+                      type="button"
+                      variant="outline" 
+                      size="sm" 
+                      className="mt-2"
+                      onClick={testMapAPI}
+                    >
+                      测试地图API
+                    </Button>
+                    {isSearching && (
+                      <p className="text-sm text-gray-500 mt-1">搜索中...</p>
+                    )}
+                    {!isSearching && newSchoolName.trim() && searchResults.length === 0 && (
+                      <p className="text-sm text-red-500 mt-1">未找到相关学校，请尝试其他关键词</p>
+                    )}
+                    {searchResults.length > 0 && (
+                      <div className="mt-2 max-h-40 overflow-y-auto border rounded-md bg-white shadow-sm">
+                        <div className="p-2 bg-gray-50 text-xs text-gray-600 border-b">
+                          找到 {searchResults.length} 个结果
+                        </div>
+                        {searchResults.map((poi) => (
+                          <div
+                            key={poi.id}
+                            className="p-3 hover:bg-blue-50 cursor-pointer border-b last:border-b-0 transition-colors"
+                            onClick={() => selectLocation(poi)}
+                          >
+                            <div className="font-medium text-sm text-gray-900">{poi.name}</div>
+                            <div className="text-xs text-gray-600 mt-1">{poi.address}</div>
+                            {poi.type && (
+                              <div className="text-xs text-blue-600 mt-1">类型: {poi.type}</div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
+                  
+                  {selectedLocation && (
+                    <div className="p-3 bg-green-50 border border-green-200 rounded-lg">
+                      <p className="text-sm text-green-800">
+                        <strong>已选择位置：</strong> {selectedLocation.address}
+                      </p>
+                    </div>
+                  )}
+                  
                   <div>
                     <Label htmlFor="schoolAddress">学校地址</Label>
                     <Input
                       id="schoolAddress"
                       value={newSchoolAddress}
                       onChange={(e) => setNewSchoolAddress(e.target.value)}
-                      placeholder="请输入学校地址"
+                      placeholder="地址会自动填充"
+                      readOnly
                     />
                   </div>
+                  
+                  <div>
+                    <Label htmlFor="schoolNotes">备注信息（可选）</Label>
+                    <Input
+                      id="schoolNotes"
+                      value={newSchoolNotes}
+                      onChange={(e) => setNewSchoolNotes(e.target.value)}
+                      placeholder="请输入备注信息"
+                    />
+                  </div>
+                  
                   <Button 
                     onClick={addNewSchool} 
                     className="w-full"
-                    disabled={!newSchoolName || !newSchoolAddress || !pendingLocation}
+                    disabled={!newSchoolName || !newSchoolAddress || !selectedLocation}
                   >
                     添加学校
                   </Button>
-                  {!pendingLocation && (
+                  
+                  {!selectedLocation && newSchoolName && (
                     <p className="text-sm text-gray-500 text-center">
-                      请先在地图上点击选择学校位置
+                      请从搜索结果中选择学校位置
                     </p>
                   )}
                 </div>
@@ -327,7 +538,6 @@ export default function SchoolAttendanceSystem() {
                 <MapComponent 
                   schools={filteredSchools} 
                   onSchoolClick={toggleSchoolVisited}
-                  onAddSchool={handleMapAddSchool}
                 />
               ) : (
                 <div className="bg-muted rounded-lg h-96 flex items-center justify-center">
@@ -404,6 +614,11 @@ export default function SchoolAttendanceSystem() {
                         {school.name}
                       </h3>
                       <p className="text-sm text-muted-foreground mt-1">{school.address}</p>
+                      {school.notes && (
+                        <p className="text-xs text-blue-600 mt-1 bg-blue-50 px-2 py-1 rounded">
+                          备注: {school.notes}
+                        </p>
+                      )}
 
                       {school.visitDates.length > 0 && (
                         <div className="mt-3 space-y-2">
